@@ -1,0 +1,1 @@
+export default function Offline(){return (<div><h1>Sin conexión</h1><p>Estás offline. Intenta nuevamente cuando recuperes internet.</p></div>);}

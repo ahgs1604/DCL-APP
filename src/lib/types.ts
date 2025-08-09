@@ -1,0 +1,3 @@
+import { z } from 'zod';
+export const EstimateItemSchema = z.object({ conceptId: z.string().optional(), conceptName: z.string().min(1), materialId: z.string().optional(), materialName: z.string().optional(), qty: z.number().positive(), unit: z.enum(['PZA','M2','ML','KG','LT']), unitPrice: z.number().optional(), options: z.record(z.string(), z.any()).optional(), subtotal: z.number() });
+export const NewEstimateSchema = z.object({ projectId: z.string(), number: z.number().int().positive(), authorId: z.string(), title: z.string().optional(), notes: z.string().optional(), items: z.array(EstimateItemSchema), photos: z.array(z.object({ url: z.string().url(), caption: z.string().optional() })).optional() });

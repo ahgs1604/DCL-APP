@@ -1,0 +1,14 @@
+datasource db { provider="postgresql"; url=env("DATABASE_URL") }
+generator client { provider="prisma-client-js" }
+enum Role { ADMIN ESTIMATOR INVENTORY_ADMIN }
+enum Unit { PZA M2 ML KG LT }
+model User { id String @id @default(cuid()) email String @unique name String? role Role @default(ESTIMATOR) createdAt DateTime @default(now()) estimates Estimate[] movements InventoryMovement[] }
+model Project { id String @id @default(cuid()) name String code String @unique year Int createdAt DateTime @default(now()) estimates Estimate[] }
+model Concept { id String @id @default(cuid()) code String @unique name String baseUnit Unit defaultUnitPrice Decimal @db.Decimal(10,2) optionsJson Json? active Boolean @default(true) createdAt DateTime @default(now()) }
+model Material { id String @id @default(cuid()) sku String @unique name String unit Unit photoUrl String? createdAt DateTime @default(now()) items InventoryItem[] }
+model InventoryLocation { id String @id @default(cuid()) name String createdAt DateTime @default(now()) items InventoryItem[] }
+model InventoryItem { id String @id @default(cuid()) materialId String locationId String qty Decimal @db.Decimal(10,2) minQty Decimal? @db.Decimal(10,2) createdAt DateTime @default(now()) material Material @relation(fields:[materialId], references:[id]) location InventoryLocation @relation(fields:[locationId], references:[id]) movements InventoryMovement[] }
+model InventoryMovement { id String @id @default(cuid()) itemId String userId String? projectId String? delta Decimal @db.Decimal(10,2) reason String? createdAt DateTime @default(now()) item InventoryItem @relation(fields:[itemId], references:[id]) user User? @relation(fields:[userId], references:[id]) project Project? @relation(fields:[projectId], references:[id]) }
+model Estimate { id String @id @default(cuid()) projectId String number Int authorId String title String? notes String? createdAt DateTime @default(now()) items EstimateItem[] photos EstimatePhoto[] project Project @relation(fields:[projectId], references:[id]) author User @relation(fields:[authorId], references:[id]) @@unique([projectId, number]) }
+model EstimateItem { id String @id @default(cuid()) estimateId String conceptId String? conceptName String materialId String? materialName String? qty Decimal @db.Decimal(10,2) unit Unit unitPrice Decimal? @db.Decimal(10,2) optionsJson Json? subtotal Decimal @db.Decimal(10,2) estimate Estimate @relation(fields:[estimateId], references:[id]) concept Concept? @relation(fields:[conceptId], references:[id]) material Material? @relation(fields:[materialId], references:[id]) }
+model EstimatePhoto { id String @id @default(cuid()) estimateId String url String caption String? createdAt DateTime @default(now()) estimate Estimate @relation(fields:[estimateId], references:[id]) }
