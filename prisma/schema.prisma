@@ -42,6 +42,7 @@ model Project {
   createdAt DateTime @default(now())
 
   estimates Estimate[]
+  movements InventoryMovement[]  // <-- back-relation para InventoryMovement.project
 }
 
 model Concept {
@@ -53,17 +54,20 @@ model Concept {
   optionsJson      Json?
   active           Boolean  @default(true)
   createdAt        DateTime @default(now())
+
+  estimateItems    EstimateItem[]  // <-- back-relation para EstimateItem.concept
 }
 
 model Material {
-  id       String   @id @default(cuid())
-  sku      String   @unique
-  name     String
-  unit     Unit
-  photoUrl String?
+  id        String   @id @default(cuid())
+  sku       String   @unique
+  name      String
+  unit      Unit
+  photoUrl  String?
   createdAt DateTime @default(now())
 
-  items    InventoryItem[]
+  items         InventoryItem[]
+  estimateItems EstimateItem[]    // <-- back-relation para EstimateItem.material
 }
 
 model InventoryLocation {
