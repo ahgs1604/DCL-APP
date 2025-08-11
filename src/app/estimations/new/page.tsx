@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect, useState } from 'react';
 
 type Concept = { id: string; code: string; name: string; baseUnit: string };
@@ -54,10 +53,6 @@ export default function NewEstimate() {
           onChange={e => setItem({ ...item, qty: e.target.value })}
         />
       </div>
-
-      <p style={{ marginTop: 16, opacity: 0.8 }}>
-        (Demo simple para validar flujo; luego conectamos todo el carrito y exportar a Excel.)
-      </p>
     </main>
   );
 }
