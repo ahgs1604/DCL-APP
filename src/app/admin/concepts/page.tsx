@@ -1,5 +1,4 @@
 'use client';
-
 import { useEffect, useState } from 'react';
 
 type Concept = {
@@ -70,12 +69,14 @@ export default function AdminConcepts() {
       <section style={{ marginTop: 16, padding: 12, border: '1px solid #444' }}>
         <h3>2) Crear concepto</h3>
         <div style={{ display: 'grid', gap: 8, maxWidth: 520 }}>
-          <input placeholder="Código (ej. MURO-ML)" value={form.code}
-            onChange={e => setForm({ ...form, code: e.target.value })} />
-          <input placeholder="Nombre" value={form.name}
-            onChange={e => setForm({ ...form, name: e.target.value })} />
+          <input placeholder="Código (ej. MURO-ML)"
+                 value={form.code}
+                 onChange={e => setForm({ ...form, code: e.target.value })} />
+          <input placeholder="Nombre"
+                 value={form.name}
+                 onChange={e => setForm({ ...form, name: e.target.value })} />
           <select value={form.baseUnit}
-            onChange={e => setForm({ ...form, baseUnit: e.target.value as any })}>
+                  onChange={e => setForm({ ...form, baseUnit: e.target.value as any })}>
             <option value="PZA">PZA</option>
             <option value="M2">M2</option>
             <option value="ML">ML</option>
@@ -83,8 +84,8 @@ export default function AdminConcepts() {
             <option value="LT">LT</option>
           </select>
           <input placeholder="Precio unitario (opcional)"
-            value={form.defaultUnitPrice}
-            onChange={e => setForm({ ...form, defaultUnitPrice: e.target.value })} />
+                 value={form.defaultUnitPrice}
+                 onChange={e => setForm({ ...form, defaultUnitPrice: e.target.value })} />
           <button onClick={createConcept}>Guardar</button>
         </div>
       </section>
