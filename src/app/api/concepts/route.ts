@@ -1,15 +1,11 @@
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../../../lib/prisma';
 import { NextResponse } from 'next/server';
 
-// GET /api/concepts -> lista conceptos
 export async function GET() {
-  const concepts = await prisma.concept.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
+  const concepts = await prisma.concept.findMany({ orderBy: { createdAt: 'desc' } });
   return NextResponse.json(concepts);
 }
 
-// POST /api/concepts -> crear (requiere admin secret)
 export async function POST(req: Request) {
   const adminHeader = req.headers.get('x-admin-secret') || '';
   if (adminHeader !== process.env.ADMIN_SECRET) {
@@ -18,7 +14,6 @@ export async function POST(req: Request) {
 
   const body = await req.json();
   const { code, name, baseUnit, defaultUnitPrice } = body;
-
   if (!code || !name || !baseUnit) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
