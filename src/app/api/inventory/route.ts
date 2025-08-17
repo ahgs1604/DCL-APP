@@ -3,9 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
 import { Prisma } from "@prisma/client";
 
-// Fuerza runtime Node (Prisma no corre en Edge)
 export const runtime = "nodejs";
-// Evita cachear esta ruta en prod
 export const dynamic = "force-dynamic";
 
 /** GET: lista de inventario */
@@ -54,7 +52,7 @@ export async function POST(req: Request) {
       minStock,
       defaultUnitPrice,
 
-      // IMPORTANTE: necesitamos la FK del material
+      // IMPORTANTE: FK de Material como STRING (uuid/cuid)
       materialId,
     } = body as Record<string, unknown>;
 
@@ -65,17 +63,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const qtyNum = Number(initialQty ?? 0);
-    const minNum = Number(minStock ?? 0);
-
-    // materialId requerido porque en tu schema 'material' es relación
-    const materialIdNum = Number(materialId);
-    if (!Number.isInteger(materialIdNum) || materialIdNum <= 0) {
+    // materialId requerido y debe ser string no vacío
+    const materialIdStr =
+      typeof materialId === "string" ? materialId.trim() : "";
+    if (!materialIdStr) {
       return NextResponse.json(
-        { error: "Faltan campos", detail: "materialId (número) es requerido" },
+        { error: "Faltan campos", detail: "materialId (string) es requerido" },
         { status: 400 }
       );
     }
+
+    const qtyNum = Number(initialQty ?? 0);
+    const minNum = Number(minStock ?? 0);
 
     // --- Ubicación: findFirst + create si no existe ---
     let location = await prisma.inventoryLocation.findFirst({
@@ -110,12 +109,12 @@ export async function POST(req: Request) {
         name: finalName,
         unit: finalUnit,
 
-        // Campos requeridos por tu schema:
+        // Requeridos por tu schema
         qty: Number.isFinite(qtyNum) ? qtyNum : 0,
-        materialId: materialIdNum,      // <-- usamos FK directa
-        locationId: location.id,        // <-- usamos FK directa
+        materialId: materialIdStr,   // <-- STRING, no number
+        locationId: location.id,     // string o int según tu schema (Prisma infiere de .id)
 
-        // Opcionales (si existen en tu schema):
+        // Opcionales (si existen en tu schema)
         ...(photoUrl && typeof photoUrl === "string" && photoUrl.trim()
           ? { photoUrl: photoUrl.trim() }
           : {}),
@@ -127,23 +126,11 @@ export async function POST(req: Request) {
           : {}),
       };
 
-      let item;
-      try {
-        item = await tx.inventoryItem.create({ data });
-      } catch (err: any) {
-        console.error("Error creando InventoryItem (unchecked):", {
-          message: err?.message,
-          code: err?.code,
-          meta: err?.meta,
-          triedData: data,
-        });
-        throw err;
-      }
+      const item = await tx.inventoryItem.create({ data });
 
       if (qtyNum > 0) {
         await tx.inventoryMovement.create({
           data: {
-            // Si tu modelo es por FK:
             itemId: item.id,
             delta: qtyNum,
             reason: "Alta inicial",
