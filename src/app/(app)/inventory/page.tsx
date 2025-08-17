@@ -1,34 +1,39 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 
-export const dynamic = "force-dynamic"; // para que siempre lea DB al cargar
+export const dynamic = "force-dynamic";
 
 async function fetchItems() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ""}/api/inventory`, {
-    cache: "no-store",
-  });
-  if (!res.ok) return [];
-  return res.json();
+  try {
+    const h = headers();
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+    const proto = h.get("x-forwarded-proto") ?? "https";
+    const base = `${proto}://${host}`;
+
+    const res = await fetch(`${base}/api/inventory`, { cache: "no-store" });
+    if (!res.ok) return [];
+    return (await res.json()) as Array<{
+      id: string;
+      materialName: string;
+      sku: string;
+      unit: string;
+      locationName: string;
+      qty: string;
+      minQty: string | null;
+      photoUrl?: string | null;
+    }>;
+  } catch {
+    return [];
+  }
 }
 
 export default async function InventoryPage() {
-  const items: Array<{
-    id: string;
-    materialName: string;
-    sku: string;
-    unit: string;
-    locationName: string;
-    qty: string; // viene como string por Decimal
-    minQty: string | null;
-    photoUrl?: string | null;
-  }> = await fetchItems();
+  const items = await fetchItems();
 
   return (
     <div style={{ padding: 16 }}>
       <h1>Inventario</h1>
-
-      <p>
-        <Link href="/">← Volver a inicio</Link>
-      </p>
+      <p><Link href="/">← Volver a inicio</Link></p>
 
       <h2>Dar de alta producto</h2>
       <form method="post" action="/api/inventory" style={{ display: "grid", gap: 8, maxWidth: 420 }}>
@@ -70,12 +75,7 @@ export default async function InventoryPage() {
                 <td>{it.sku}</td>
                 <td>
                   {it.materialName}
-                  {it.photoUrl ? (
-                    <>
-                      {" "}
-                      — <a href={it.photoUrl} target="_blank">foto</a>
-                    </>
-                  ) : null}
+                  {it.photoUrl ? <> — <a href={it.photoUrl} target="_blank">foto</a></> : null}
                 </td>
                 <td>{it.unit}</td>
                 <td>{it.qty}</td>
