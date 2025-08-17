@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { prisma } from "../../../lib/prisma";
 
 // -------- GET: lista de inventario --------
 export async function GET() {
@@ -38,8 +38,8 @@ export async function POST(req: Request) {
     // --- Payload del form ---
     const body = await req.json();
     const {
-      name, // puede que NO exista en tu modelo InventoryItem
-      baseUnit, // puede que NO exista en tu modelo InventoryItem
+      name,        // puede que NO exista en tu modelo InventoryItem
+      baseUnit,    // puede que NO exista en tu modelo InventoryItem
       photoUrl,
       locationName,
       initialQty,
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     const qtyNum = Number(initialQty ?? 0);
     const minNum = Number(minStock ?? 0);
 
-    // --- Buscar o crear ubicación (sin upsert) ---
+    // --- Buscar o crear ubicación (sin upsert por índice único) ---
     let location = await prisma.inventoryLocation.findFirst({
       where: { name: locationName },
     });
@@ -75,17 +75,18 @@ export async function POST(req: Request) {
 
     // --- Transacción: crear item y movimiento inicial ---
     const result = await prisma.$transaction(async (tx) => {
-      // Construimos 'data' con lo mínimo para evitar choques con campos inexistentes:
+      // Construimos 'data' con lo mínimo (campos garantizados por tu schema)
       const data: Record<string, any> = {
         locationId: location!.id,
       };
-      // Agregamos SOLO si existen en tu schema:
+
+      // Agrega SOLO si existen en tu schema (evita fallos de tipos en Prisma)
       if (typeof photoUrl === "string" && photoUrl.trim())
         data.photoUrl = photoUrl.trim();
       if (!Number.isNaN(minNum)) data.minStock = minNum;
 
-      // (Temporales) Si tu modelo sí tiene estos campos, se añadirán;
-      // si no, los verás en el error y los quitamos.
+      // (Opcionales) Si tu modelo SÍ tiene estos campos, se añadirán;
+      // si no, Prisma lanzará error y lo verás en logs/alert.
       if (typeof name === "string" && name.trim()) data.name = name.trim();
       if (typeof baseUnit === "string" && baseUnit.trim())
         data.baseUnit = baseUnit.trim();
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
           prismaError: { code: err?.code, message: err?.message },
           triedData: data,
         });
-        throw err; // lo capturamos fuera para responder con detalle
+        throw err;
       }
 
       if (qtyNum > 0) {
@@ -120,7 +121,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, item: result }, { status: 201 });
   } catch (err: any) {
-    // Devolvemos el detalle al cliente para que lo veas en el alert
     const payload = {
       error: "Error interno",
       code: err?.code ?? undefined,
