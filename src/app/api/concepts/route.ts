@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
+import { Unit } from '@prisma/client'; // <- enum del schema Prisma
 
-export const runtime = 'nodejs'; // asegura Node runtime
+export const runtime = 'nodejs';
+
+// helper para validar el enum
+function isUnit(value: unknown): value is Unit {
+  return Object.values(Unit).includes(value as Unit);
+}
 
 export async function GET() {
   const concepts = await prisma.concept.findMany({
@@ -11,12 +17,11 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  // 1) Leer el secreto del request en ambos formatos
+  // Secreto vía header (x-admin-secret) o Authorization: Bearer
   const headerSecretRaw =
     req.headers.get('x-admin-secret') ??
     req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ??
     '';
-
   const headerSecret = headerSecretRaw.trim();
   const serverSecret = (process.env.ADMIN_SECRET ?? '').trim();
 
@@ -24,20 +29,36 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 2) Validar payload
   const body = await req.json();
-  const { code, name, baseUnit, defaultUnitPrice } = body as {
+  const {
+    code,
+    name,
+    baseUnit: baseUnitRaw,
+    defaultUnitPrice,
+  }: {
     code?: string;
     name?: string;
     baseUnit?: string;
     defaultUnitPrice?: number | string | null;
-  };
+  } = body;
 
-  if (!code || !name || !baseUnit) {
+  if (!code || !name || !baseUnitRaw) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  // 3) Normalizar precio (si viene vacío -> 0)
+  // Validar / convertir baseUnit al enum Unit
+  if (!isUnit(baseUnitRaw)) {
+    return NextResponse.json(
+      {
+        error: 'Invalid baseUnit',
+        allowed: Object.values(Unit), // Ej: ["PZA","M2","ML","KG","LT"]
+      },
+      { status: 400 }
+    );
+  }
+  const baseUnit: Unit = baseUnitRaw;
+
+  // Normalizar precio
   const price =
     defaultUnitPrice === undefined ||
     defaultUnitPrice === null ||
@@ -45,12 +66,11 @@ export async function POST(req: Request) {
       ? 0
       : Number(defaultUnitPrice);
 
-  // 4) Crear concepto
   const created = await prisma.concept.create({
     data: {
       code,
       name,
-      baseUnit, // debe coincidir con tu enum Unit (PZA, M2, etc.)
+      baseUnit, // ahora es Unit (enum), no string
       defaultUnitPrice: price,
     },
   });
