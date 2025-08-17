@@ -1,111 +1,83 @@
-import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient, Unit } from "@prisma/client";
+import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+let inventory = [
+  { id: 1, name: "Lámpara LED", quantity: 10, price: 200 },
+  { id: 2, name: "Cable eléctrico", quantity: 50, price: 15 },
+  { id: 3, name: "Interruptor sencillo", quantity: 30, price: 40 },
+];
 
-const prisma = new PrismaClient();
-
+// 📌 GET -> obtiene todo el inventario
 export async function GET() {
+  return NextResponse.json(inventory);
+}
+
+// 📌 POST -> agrega un nuevo producto
+export async function POST(request: Request) {
   try {
-    const items = await prisma.inventoryItem.findMany({
-      orderBy: [{ location: { name: "asc" } }, { material: { name: "asc" } }],
-      include: { material: true, location: true },
-    });
+    const body = await request.json();
+    const newItem = {
+      id: inventory.length + 1,
+      ...body,
+    };
+    inventory.push(newItem);
 
-    const data = items.map((it) => ({
-      id: it.id,
-      materialName: it.material.name,
-      sku: it.material.sku,
-      unit: it.material.unit as Unit,
-      locationName: it.location.name,
-      qty: it.qty.toString(),
-      minQty: it.minQty ? it.minQty.toString() : null,
-      photoUrl: it.material.photoUrl,
-    }));
-
-    return NextResponse.json(data);
-  } catch (err: any) {
-    console.error("GET /api/inventory error:", err?.message || err);
-    return NextResponse.json({ error: "Inventory GET failed" }, { status: 500 });
+    return NextResponse.json(newItem, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      { message: "Error al crear el producto" },
+      { status: 400 }
+    );
   }
 }
 
-export async function POST(req: NextRequest) {
+// 📌 PUT -> actualiza un producto
+export async function PUT(request: Request) {
   try {
-    const contentType = req.headers.get("content-type") || "";
-    const body =
-      contentType.includes("application/json")
-        ? await req.json()
-        : Object.fromEntries((await req.formData()).entries());
+    const body = await request.json();
+    const { id, ...rest } = body;
 
-    const adminSecret = String(body.adminSecret || "");
-    if (adminSecret !== process.env.ADMIN_SECRET) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let itemIndex = inventory.findIndex((item) => item.id === id);
+
+    if (itemIndex === -1) {
+      return NextResponse.json(
+        { message: "Producto no encontrado" },
+        { status: 404 }
+      );
     }
 
-    const sku = String(body.sku || "").trim();
-    const name = String(body.name || "").trim();
-    const unit = String(body.unit || "PZA").trim() as Unit;
-    const photoUrl = body.photoUrl ? String(body.photoUrl) : null;
-    const locationName = String(body.locationName || "").trim();
-    const qty = Number(body.qty || 0);
-    const minQty = body.minQty ? Number(body.minQty) : null;
+    inventory[itemIndex] = { ...inventory[itemIndex], ...rest };
 
-    if (!sku || !name || !locationName || !qty || isNaN(qty)) {
-      return NextResponse.json({ error: "Datos incompletos" }, { status: 400 });
+    return NextResponse.json(inventory[itemIndex]);
+  } catch (error) {
+    return NextResponse.json(
+      { message: "Error al actualizar el producto" },
+      { status: 400 }
+    );
+  }
+}
+
+// 📌 DELETE -> elimina un producto por id
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = Number(searchParams.get("id"));
+
+    const itemIndex = inventory.findIndex((item) => item.id === id);
+
+    if (itemIndex === -1) {
+      return NextResponse.json(
+        { message: "Producto no encontrado" },
+        { status: 404 }
+      );
     }
 
-    const material = await prisma.material.upsert({
-      where: { sku },
-      update: { name, unit, photoUrl: photoUrl || undefined },
-      create: { sku, name, unit, photoUrl: photoUrl || undefined },
-    });
+    const deletedItem = inventory.splice(itemIndex, 1);
 
-    const location = await prisma.inventoryLocation.upsert({
-      where: { name: locationName },
-      update: {},
-      create: { name: locationName },
-    });
-
-    const existing = await prisma.inventoryItem.findFirst({
-      where: { materialId: material.id, locationId: location.id },
-    });
-
-    let itemId: string;
-
-    if (existing) {
-      const updated = await prisma.inventoryItem.update({
-        where: { id: existing.id },
-        data: {
-          qty: existing.qty.plus(qty),
-          minQty: minQty ?? existing.minQty,
-        },
-      });
-      itemId = updated.id;
-    } else {
-      const created = await prisma.inventoryItem.create({
-        data: {
-          materialId: material.id,
-          locationId: location.id,
-          qty,
-          minQty,
-        },
-      });
-      itemId = created.id;
-    }
-
-    await prisma.inventoryMovement.create({
-      data: {
-        itemId,
-        delta: qty,
-        reason: "Alta de producto",
-      },
-    });
-
-    return NextResponse.redirect(new URL("/inventory", req.url), 303);
-  } catch (err: any) {
-    console.error("POST /api/inventory error:", err?.message || err);
-    return NextResponse.json({ error: "Inventory POST failed" }, { status: 500 });
+    return NextResponse.json(deletedItem[0]);
+  } catch (error) {
+    return NextResponse.json(
+      { message: "Error al eliminar el producto" },
+      { status: 400 }
+    );
   }
 }
