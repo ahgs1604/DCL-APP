@@ -10,7 +10,7 @@ export async function GET() {
       include: {
         location: true,
         movements: {
-          select: { delta: true }, // solo necesitamos delta para sumar stock
+          select: { delta: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -50,16 +50,13 @@ export async function POST(req: Request) {
     // --- 2) Payload ---
     const body = await req.json();
     const {
-      // del formulario
-      code,            // si tu modelo NO tiene "code", lo ignoramos
       name,
-      baseUnit,        // debe coincidir con el enum Unit de tu schema (p.ej. 'PZA', 'M2', etc.)
+      baseUnit,
       photoUrl,
       locationName,
       initialQty,
       minStock,
     } = body as Partial<{
-      code: string;
       name: string;
       baseUnit: string;
       photoUrl?: string;
@@ -78,37 +75,35 @@ export async function POST(req: Request) {
     const qtyNum = Number(initialQty ?? 0);
     const minNum = Number(minStock ?? 0);
 
-    // --- 3) Upsert de ubicación ---
-    const location = await prisma.inventoryLocation.upsert({
+    // --- 3) Buscar o crear ubicación (sin usar upsert) ---
+    let location = await prisma.inventoryLocation.findFirst({
       where: { name: locationName },
-      update: {},
-      create: { name: locationName },
     });
+
+    if (!location) {
+      location = await prisma.inventoryLocation.create({
+        data: { name: locationName },
+      });
+    }
 
     // --- 4) Crear item + movimiento inicial en transacción ---
     const result = await prisma.$transaction(async (tx) => {
-      // Ajusta los campos de acuerdo a tu modelo InventoryItem.
-      // Campos seguros: name, baseUnit, locationId, photoUrl?, minStock?
       const item = await tx.inventoryItem.create({
         data: {
           name,
-          baseUnit: baseUnit as any, // cast si el enum es Unit
-          locationId: location.id,
+          baseUnit: baseUnit as any,
+          locationId: location!.id,
           ...(photoUrl ? { photoUrl } : {}),
           ...(Number.isFinite(minNum) ? { minStock: minNum } : {}),
-          // Si tu modelo SÍ tiene "code" y quieres usarlo, descomenta:
-          // ...(code ? { code } : {}),
         },
       });
 
-      // Movimiento inicial (solo si > 0)
       if (qtyNum > 0) {
         await tx.inventoryMovement.create({
           data: {
             itemId: item.id,
-            delta: qtyNum,              // positiva suma al stock
+            delta: qtyNum,
             reason: 'Alta inicial',
-            // IMPORTANTE: estos dos parecen requeridos en tu schema
             userId: 'system',
             projectId: 'inventory',
           },
@@ -121,15 +116,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, item: result }, { status: 201 });
   } catch (err: any) {
     console.error('POST /api/inventory error:', err);
-    // Prisma suele traer info útil en err.code, err.meta, etc.
     return NextResponse.json(
-      {
-        error: 'Error interno',
-        detail: err?.message ?? String(err),
-        // Si quieres mayor visibilidad temporal:
-        // meta: (err as any)?.meta ?? null,
-        // code: (err as any)?.code ?? null,
-      },
+      { error: 'Error interno', detail: err?.message ?? String(err) },
       { status: 500 }
     );
   }
