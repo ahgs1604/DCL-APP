@@ -1,55 +1,45 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '../../../lib/prisma';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
-export const runtime = 'nodejs';
-
-// GET: lista de items con ubicación y stock calculado
+// -------- GET: lista de inventario --------
 export async function GET() {
   try {
     const items = await prisma.inventoryItem.findMany({
       include: {
         location: true,
-        movements: { select: { delta: true } },
+        movements: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
       },
-      orderBy: { createdAt: 'desc' },
     });
-
-    const withStock = items.map((it) => {
-      const stock = it.movements.reduce((sum, m) => sum + Number(m.delta), 0);
-      const { movements, ...rest } = it;
-      return { ...rest, stock };
-    });
-
-    return NextResponse.json(withStock);
-  } catch (err: any) {
-    console.error('GET /api/inventory error:', err);
-    return NextResponse.json(
-      { error: 'Failed to fetch inventory', detail: err?.message ?? String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json(items);
+  } catch (error) {
+    console.error("Error fetching inventory:", error);
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
 
-// POST: alta de producto + movimiento inicial opcional
+// -------- POST: agregar nuevo item --------
 export async function POST(req: Request) {
   try {
-    // --- 1) Auth por secreto ---
+    // --- Auth por secreto ---
     const headerSecretRaw =
-      req.headers.get('x-admin-secret') ??
-      req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ??
-      '';
+      req.headers.get("x-admin-secret") ??
+      req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+      "";
     const headerSecret = headerSecretRaw.trim();
-    const serverSecret = (process.env.ADMIN_SECRET ?? '').trim();
+    const serverSecret = (process.env.ADMIN_SECRET ?? "").trim();
 
     if (!serverSecret || headerSecret !== serverSecret) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // --- 2) Payload ---
+    // --- Payload del form ---
     const body = await req.json();
     const {
-      name,            // puede que NO exista en tu modelo InventoryItem
-      baseUnit,        // puede que NO exista en tu modelo InventoryItem
+      name, // puede que NO exista en tu modelo InventoryItem
+      baseUnit, // puede que NO exista en tu modelo InventoryItem
       photoUrl,
       locationName,
       initialQty,
@@ -65,7 +55,7 @@ export async function POST(req: Request) {
 
     if (!locationName) {
       return NextResponse.json(
-        { error: 'Faltan campos', detail: 'locationName es requerido' },
+        { error: "Faltan campos", detail: "locationName es requerido" },
         { status: 400 }
       );
     }
@@ -73,43 +63,54 @@ export async function POST(req: Request) {
     const qtyNum = Number(initialQty ?? 0);
     const minNum = Number(minStock ?? 0);
 
-    // --- 3) Buscar o crear ubicación (sin upsert) ---
+    // --- Buscar o crear ubicación (sin upsert) ---
     let location = await prisma.inventoryLocation.findFirst({
       where: { name: locationName },
     });
-
     if (!location) {
       location = await prisma.inventoryLocation.create({
         data: { name: locationName },
       });
     }
 
-    // --- 4) Crear item + movimiento inicial en transacción ---
+    // --- Transacción: crear item y movimiento inicial ---
     const result = await prisma.$transaction(async (tx) => {
-      // Construimos el payload con los campos que tengas disponibles
+      // Construimos 'data' con lo mínimo para evitar choques con campos inexistentes:
       const data: Record<string, any> = {
         locationId: location!.id,
       };
-
-      // Añade solo si tu modelo lo soporta:
-      if (typeof name === 'string' && name.trim()) data.name = name.trim();
-      if (typeof baseUnit === 'string' && baseUnit.trim()) data.baseUnit = baseUnit.trim();
-      if (photoUrl) data.photoUrl = photoUrl;
+      // Agregamos SOLO si existen en tu schema:
+      if (typeof photoUrl === "string" && photoUrl.trim())
+        data.photoUrl = photoUrl.trim();
       if (!Number.isNaN(minNum)) data.minStock = minNum;
 
-      // Casteamos a any para no romper en build si el tipo de Prisma no tiene esos campos
-      const item = await tx.inventoryItem.create({
-        data: data as any,
-      });
+      // (Temporales) Si tu modelo sí tiene estos campos, se añadirán;
+      // si no, los verás en el error y los quitamos.
+      if (typeof name === "string" && name.trim()) data.name = name.trim();
+      if (typeof baseUnit === "string" && baseUnit.trim())
+        data.baseUnit = baseUnit.trim();
+
+      let item;
+      try {
+        item = await tx.inventoryItem.create({
+          data: data as any,
+        });
+      } catch (err: any) {
+        console.error("Error creando InventoryItem:", {
+          prismaError: { code: err?.code, message: err?.message },
+          triedData: data,
+        });
+        throw err; // lo capturamos fuera para responder con detalle
+      }
 
       if (qtyNum > 0) {
         await tx.inventoryMovement.create({
           data: {
             itemId: item.id,
             delta: qtyNum,
-            reason: 'Alta inicial',
-            userId: 'system',
-            projectId: 'inventory',
+            reason: "Alta inicial",
+            userId: "system",
+            projectId: "inventory",
           },
         });
       }
@@ -119,10 +120,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, item: result }, { status: 201 });
   } catch (err: any) {
-    console.error('POST /api/inventory error:', err);
-    return NextResponse.json(
-      { error: 'Error interno', detail: err?.message ?? String(err) },
-      { status: 500 }
-    );
+    // Devolvemos el detalle al cliente para que lo veas en el alert
+    const payload = {
+      error: "Error interno",
+      code: err?.code ?? undefined,
+      message: err?.message ?? String(err),
+    };
+    console.error("POST /api/inventory error:", payload);
+    return NextResponse.json(payload, { status: 500 });
   }
 }
