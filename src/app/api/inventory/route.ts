@@ -1,83 +1,162 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
+import { prisma } from '../../../lib/prisma';
 
-let inventory = [
-  { id: 1, name: "Lámpara LED", quantity: 10, price: 200 },
-  { id: 2, name: "Cable eléctrico", quantity: 50, price: 15 },
-  { id: 3, name: "Interruptor sencillo", quantity: 30, price: 40 },
-];
+export const runtime = 'nodejs'; // asegúrate de usar runtime Node
 
-// 📌 GET -> obtiene todo el inventario
+type Body = {
+  name?: string;
+  description?: string;
+  unit?: string;
+  photoUrl?: string;
+  locationName?: string;
+  initialQty?: number | string | null;
+  minQty?: number | string | null;
+};
+
+function okNum(v: unknown, def = 0) {
+  if (v === '' || v === null || v === undefined) return def;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+function normStr(v: unknown) {
+  return (typeof v === 'string' ? v : '').trim();
+}
+
+function isAllowedUnit(u: string) {
+  // Ajusta si tu enum Unit tiene más opciones
+  return ['PZA', 'M2', 'ML', 'M3', 'KG', 'LT'].includes(u);
+}
+
+function getAdminSecret(req: Request) {
+  const header =
+    req.headers.get('x-admin-secret') ??
+    req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ??
+    '';
+  return header.trim();
+}
+
+// ------------------------------------------------------------------
+// GET: devuelve items con su ubicación y stock calculado
+// ------------------------------------------------------------------
 export async function GET() {
-  return NextResponse.json(inventory);
+  const items = await prisma.inventoryItem.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: {
+      location: true,
+      movements: {
+        select: { quantity: true, type: true },
+      },
+    },
+  });
+
+  const data = items.map((i) => {
+    const stock = i.movements.reduce((acc, m) => {
+      return acc + (m.type === 'IN' ? m.quantity : -m.quantity);
+    }, 0);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { movements, ...rest } = i as any;
+    return { ...rest, stock };
+  });
+
+  return NextResponse.json(data);
 }
 
-// 📌 POST -> agrega un nuevo producto
-export async function POST(request: Request) {
+// ------------------------------------------------------------------
+// POST: crea item, crea/usa ubicación y registra carga inicial
+// ------------------------------------------------------------------
+export async function POST(req: Request) {
   try {
-    const body = await request.json();
-    const newItem = {
-      id: inventory.length + 1,
-      ...body,
-    };
-    inventory.push(newItem);
+    // 1) Autorización admin
+    const headerSecret = getAdminSecret(req);
+    const serverSecret = (process.env.ADMIN_SECRET ?? '').trim();
 
-    return NextResponse.json(newItem, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { message: "Error al crear el producto" },
-      { status: 400 }
-    );
-  }
-}
+    if (!serverSecret || headerSecret !== serverSecret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-// 📌 PUT -> actualiza un producto
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json();
-    const { id, ...rest } = body;
+    // 2) Body + validaciones
+    const raw: Body = await req.json();
 
-    let itemIndex = inventory.findIndex((item) => item.id === id);
+    const name = normStr(raw.name);
+    const description = normStr(raw.description);
+    const unit = normStr(raw.unit).toUpperCase(); // PZA, M2, etc.
+    const photoUrl = normStr(raw.photoUrl);
+    const locationName = normStr(raw.locationName);
+    const initialQty = okNum(raw.initialQty, 0);
+    const minQty = okNum(raw.minQty, 0);
 
-    if (itemIndex === -1) {
+    if (!name || !unit || !locationName) {
       return NextResponse.json(
-        { message: "Producto no encontrado" },
-        { status: 404 }
+        { error: 'Faltan campos: name, unit y locationName son obligatorios' },
+        { status: 400 }
+      );
+    }
+    if (!isAllowedUnit(unit)) {
+      return NextResponse.json(
+        { error: `La unidad ${unit} no es válida` },
+        { status: 400 }
       );
     }
 
-    inventory[itemIndex] = { ...inventory[itemIndex], ...rest };
+    // 3) Asegurar ubicación (sin requerir unique index en name)
+    const existingLoc = await prisma.inventoryLocation.findFirst({
+      where: { name: locationName },
+      select: { id: true },
+    });
 
-    return NextResponse.json(inventory[itemIndex]);
-  } catch (error) {
-    return NextResponse.json(
-      { message: "Error al actualizar el producto" },
-      { status: 400 }
-    );
-  }
-}
+    const locationId =
+      existingLoc?.id ??
+      (await prisma.inventoryLocation.create({
+        data: { name: locationName },
+        select: { id: true },
+      })).id;
 
-// 📌 DELETE -> elimina un producto por id
-export async function DELETE(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = Number(searchParams.get("id"));
+    // 4) Crear item
+    const item = await prisma.inventoryItem.create({
+      data: {
+        name,
+        description: description || null,
+        unit: unit as any, // mapea a tu enum Unit
+        photoUrl: photoUrl || null,
+        locationId,
+        minStock: minQty,
+      },
+      select: {
+        id: true,
+        name: true,
+        unit: true,
+        minStock: true,
+        photoUrl: true,
+        locationId: true,
+        createdAt: true,
+      },
+    });
 
-    const itemIndex = inventory.findIndex((item) => item.id === id);
-
-    if (itemIndex === -1) {
-      return NextResponse.json(
-        { message: "Producto no encontrado" },
-        { status: 404 }
-      );
+    // 5) Registrar movimiento inicial si aplica
+    if (initialQty > 0) {
+      await prisma.inventoryMovement.create({
+        data: {
+          itemId: item.id,
+          type: 'IN',
+          quantity: initialQty,
+          note: 'Carga inicial',
+        },
+      });
     }
 
-    const deletedItem = inventory.splice(itemIndex, 1);
-
-    return NextResponse.json(deletedItem[0]);
-  } catch (error) {
+    return NextResponse.json(item, { status: 201 });
+  } catch (err: any) {
+    // Devuelve mensaje útil para depurar
     return NextResponse.json(
-      { message: "Error al eliminar el producto" },
-      { status: 400 }
+      {
+        error: 'Error al crear el producto',
+        detail:
+          typeof err?.message === 'string'
+            ? err.message
+            : JSON.stringify(err),
+      },
+      { status: 500 }
     );
   }
 }
