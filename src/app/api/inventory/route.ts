@@ -1,5 +1,7 @@
+// src/app/api/inventory/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
+import { Prisma } from "@prisma/client"; // <-- importa tipos
 
 /** GET: lista de inventario */
 export async function GET() {
@@ -32,10 +34,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // --- Body del formulario (admitimos varios nombres de campo) ---
+    // --- Body ---
     const body = await req.json();
     const {
-      // posibles nombres que puede mandar tu form
       code,
       sku,
       name,
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
       initialQty,
       minStock,
       defaultUnitPrice,
+      material, // <-- NUEVO: lo leemos del body si viene
     } = body as Record<string, unknown>;
 
     if (!locationName || typeof locationName !== "string") {
@@ -69,64 +71,60 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- Transacción: crear item + movimiento inicial si aplica ---
+    // --- Transacción ---
     const createdItem = await prisma.$transaction(async (tx) => {
-      // Construimos data de forma tolerante:
-      // Si tu modelo no tiene alguno de estos campos, Prisma lo ignorará si no lo incluimos.
-      // Y si SON requeridos en tu schema, les ponemos defaults razonables.
-      const safeData: Record<string, any> = {
-        locationId: location!.id,
-      };
-
-      // code/sku (fallback para NOT NULL en caso de existir en el modelo)
+      // Derivamos valores finales
       const finalCode =
         (typeof code === "string" && code.trim()) ||
         (typeof sku === "string" && sku.trim()) ||
         `ITEM-${Date.now()}`;
-      // name/description
+
       const finalName =
         (typeof name === "string" && name.trim()) ||
         (typeof description === "string" && description.trim()) ||
         "Producto";
-      // unit/baseUnit
+
       const finalUnit =
         (typeof unit === "string" && unit.trim()) ||
         (typeof baseUnit === "string" && baseUnit.trim()) ||
         "PZA";
 
-      // Solo añadimos los campos si tu modelo los tiene.
-      // Si alguno NO existe en tu schema, Prisma no se entera hasta runtime.
-      // Por eso devolvemos error detallado abajo si falla.
-      safeData.code = finalCode;
-      safeData.name = finalName;
-      safeData.unit = finalUnit;
+      const finalMaterial =
+        (typeof material === "string" && material.trim()) || "GEN"; // default seguro
 
-      if (typeof defaultUnitPrice === "number") {
-        safeData.defaultUnitPrice = defaultUnitPrice;
-      } else if (
-        typeof defaultUnitPrice === "string" &&
-        defaultUnitPrice.trim() !== ""
-      ) {
-        safeData.defaultUnitPrice = Number(defaultUnitPrice);
-      }
+      const data: Prisma.InventoryItemCreateInput = {
+        code: finalCode,
+        name: finalName,
+        unit: finalUnit,
+        // Campos requeridos por tu schema:
+        qty: Number.isFinite(qtyNum) ? qtyNum : 0,
+        material: finalMaterial,
+        // Relación location en modo "checked"
+        location: { connect: { id: location.id } },
+      };
 
-      if (typeof photoUrl === "string" && photoUrl.trim()) {
-        safeData.photoUrl = photoUrl.trim();
+      if (photoUrl && typeof photoUrl === "string" && photoUrl.trim()) {
+        (data as any).photoUrl = photoUrl.trim();
       }
       if (!Number.isNaN(minNum)) {
-        safeData.minStock = minNum;
+        (data as any).minStock = minNum;
+      }
+      if (
+        typeof defaultUnitPrice === "number" ||
+        (typeof defaultUnitPrice === "string" && defaultUnitPrice.trim() !== "")
+      ) {
+        (data as any).defaultUnitPrice = Number(defaultUnitPrice);
       }
 
       let item;
       try {
-        item = await tx.inventoryItem.create({ data: safeData });
+        item = await tx.inventoryItem.create({ data });
       } catch (err: any) {
-        // Prisma te dirá exactamente qué campo no existe / viola NOT NULL / índice único, etc.
         console.error("Error creando InventoryItem:", {
           message: err?.message,
           code: err?.code,
           meta: err?.meta,
-          triedData: safeData,
+          triedData: data,
         });
         throw err;
       }
@@ -134,7 +132,7 @@ export async function POST(req: Request) {
       if (qtyNum > 0) {
         await tx.inventoryMovement.create({
           data: {
-            itemId: item.id,
+            item: { connect: { id: item.id } }, // opcional: itemId si tu modelo lo usa
             delta: qtyNum,
             reason: "Alta inicial",
             userId: "system",
@@ -148,7 +146,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, item: createdItem }, { status: 201 });
   } catch (err: any) {
-    // Devolvemos TODO lo útil para depurar desde el navegador
     const payload = {
       error: "Error interno",
       message: err?.message ?? String(err),
