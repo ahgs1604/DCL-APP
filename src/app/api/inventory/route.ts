@@ -23,6 +23,7 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
 
+    // Adaptamos a la forma que renderiza /inventory/page.tsx
     const items = rows.map((it) => ({
       id: it.id,
       name: it.material.name,
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
           select: { id: true },
         });
 
-    // --- Resolver/crear ubicación (findFirst + create porque name NO es único)
+    // --- Resolver/crear ubicación (NO usamos upsert porque name no es único)
     let loc = await prisma.inventoryLocation.findFirst({
       where: { name: locationName.trim() },
       select: { id: true },
