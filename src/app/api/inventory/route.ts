@@ -23,7 +23,6 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
 
-    // Adaptamos a la forma que renderiza /inventory/page.tsx
     const items = rows.map((it) => ({
       id: it.id,
       name: it.material.name,
@@ -147,13 +146,17 @@ export async function POST(req: Request) {
           select: { id: true },
         });
 
-    // --- Resolver/crear ubicación
-    const loc = await prisma.inventoryLocation.upsert({
+    // --- Resolver/crear ubicación (findFirst + create porque name NO es único)
+    let loc = await prisma.inventoryLocation.findFirst({
       where: { name: locationName.trim() },
-      update: {},
-      create: { name: locationName.trim() },
       select: { id: true },
     });
+    if (!loc) {
+      loc = await prisma.inventoryLocation.create({
+        data: { name: locationName.trim() },
+        select: { id: true },
+      });
+    }
 
     // --- Crear item + movimiento inicial (si qty > 0)
     const createdItem = await prisma.$transaction(async (tx) => {
