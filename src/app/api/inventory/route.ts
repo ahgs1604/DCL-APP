@@ -1,7 +1,12 @@
 // src/app/api/inventory/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
-import { Prisma } from "@prisma/client"; // <-- importa tipos
+import { Prisma } from "@prisma/client";
+
+// Fuerza runtime Node (Prisma no corre en Edge)
+export const runtime = "nodejs";
+// Evita cachear esta ruta en prod
+export const dynamic = "force-dynamic";
 
 /** GET: lista de inventario */
 export async function GET() {
@@ -48,7 +53,9 @@ export async function POST(req: Request) {
       initialQty,
       minStock,
       defaultUnitPrice,
-      material, // <-- NUEVO: lo leemos del body si viene
+
+      // IMPORTANTE: necesitamos la FK del material
+      materialId,
     } = body as Record<string, unknown>;
 
     if (!locationName || typeof locationName !== "string") {
@@ -60,6 +67,15 @@ export async function POST(req: Request) {
 
     const qtyNum = Number(initialQty ?? 0);
     const minNum = Number(minStock ?? 0);
+
+    // materialId requerido porque en tu schema 'material' es relación
+    const materialIdNum = Number(materialId);
+    if (!Number.isInteger(materialIdNum) || materialIdNum <= 0) {
+      return NextResponse.json(
+        { error: "Faltan campos", detail: "materialId (número) es requerido" },
+        { status: 400 }
+      );
+    }
 
     // --- Ubicación: findFirst + create si no existe ---
     let location = await prisma.inventoryLocation.findFirst({
@@ -89,38 +105,33 @@ export async function POST(req: Request) {
         (typeof baseUnit === "string" && baseUnit.trim()) ||
         "PZA";
 
-      const finalMaterial =
-        (typeof material === "string" && material.trim()) || "GEN"; // default seguro
-
-      const data: Prisma.InventoryItemCreateInput = {
+      const data: Prisma.InventoryItemUncheckedCreateInput = {
         code: finalCode,
         name: finalName,
         unit: finalUnit,
+
         // Campos requeridos por tu schema:
         qty: Number.isFinite(qtyNum) ? qtyNum : 0,
-        material: finalMaterial,
-        // Relación location en modo "checked"
-        location: { connect: { id: location.id } },
-      };
+        materialId: materialIdNum,      // <-- usamos FK directa
+        locationId: location.id,        // <-- usamos FK directa
 
-      if (photoUrl && typeof photoUrl === "string" && photoUrl.trim()) {
-        (data as any).photoUrl = photoUrl.trim();
-      }
-      if (!Number.isNaN(minNum)) {
-        (data as any).minStock = minNum;
-      }
-      if (
-        typeof defaultUnitPrice === "number" ||
-        (typeof defaultUnitPrice === "string" && defaultUnitPrice.trim() !== "")
-      ) {
-        (data as any).defaultUnitPrice = Number(defaultUnitPrice);
-      }
+        // Opcionales (si existen en tu schema):
+        ...(photoUrl && typeof photoUrl === "string" && photoUrl.trim()
+          ? { photoUrl: photoUrl.trim() }
+          : {}),
+        ...(!Number.isNaN(minNum) ? { minStock: minNum } : {}),
+        ...(typeof defaultUnitPrice === "number" ||
+        (typeof defaultUnitPrice === "string" &&
+          defaultUnitPrice.trim() !== "")
+          ? { defaultUnitPrice: Number(defaultUnitPrice) }
+          : {}),
+      };
 
       let item;
       try {
         item = await tx.inventoryItem.create({ data });
       } catch (err: any) {
-        console.error("Error creando InventoryItem:", {
+        console.error("Error creando InventoryItem (unchecked):", {
           message: err?.message,
           code: err?.code,
           meta: err?.meta,
@@ -132,7 +143,8 @@ export async function POST(req: Request) {
       if (qtyNum > 0) {
         await tx.inventoryMovement.create({
           data: {
-            item: { connect: { id: item.id } }, // opcional: itemId si tu modelo lo usa
+            // Si tu modelo es por FK:
+            itemId: item.id,
             delta: qtyNum,
             reason: "Alta inicial",
             userId: "system",
