@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
 
-export const runtime = 'nodejs'; // asegura Node runtime
+export const runtime = 'nodejs'; // asegurar runtime de Node
 
 // GET: lista de inventario con stock calculado
 export async function GET() {
@@ -10,16 +10,14 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
       include: {
         location: true,
-        movements: true, // traemos todo el objeto de movimientos
+        movements: true, // trae todos los movimientos (con 'delta')
       },
     });
 
-    // calcular stock
+    // Stock = suma de los deltas (Decimal -> Number)
     const withStock = items.map((item) => {
       const stock = item.movements.reduce((sum, m) => {
-        if (m.type === 'IN') return sum + m.quantity;
-        if (m.type === 'OUT') return sum - m.quantity;
-        return sum;
+        return sum + Number(m.delta || 0);
       }, 0);
 
       return { ...item, stock };
@@ -38,6 +36,7 @@ export async function GET() {
 // POST: crea un nuevo ítem de inventario
 export async function POST(req: Request) {
   try {
+    // auth por encabezado (x-admin-secret o Authorization: Bearer <secret>)
     const headerSecretRaw =
       req.headers.get('x-admin-secret') ??
       req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ??
@@ -74,7 +73,7 @@ export async function POST(req: Request) {
       data: {
         code,
         name,
-        baseUnit,
+        baseUnit, // respeta tu enum Unit en el schema
         defaultUnitPrice: price,
         locationId: locationId ?? null,
       },
